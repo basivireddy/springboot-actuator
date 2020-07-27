@@ -38,7 +38,7 @@ podTemplate(
             // Constants, please configure for to your service
             def SERVICE_NAME = "springboot-actuator"  // Name of your service example: nl-appointment-dom
             def BUILD_IMAGE = "openjdk18-openshift" // Docker runtime image
-            def DEV_PROJECT = "pringboot-actuator" // Development namespace example: nl-customer-dev
+            def DEV_PROJECT = "test" // Development namespace example: nl-customer-dev
             def CREATE_ROUTE = "true" // Should a route automatically be created
 
             // Resources to be assigned to your deployment
