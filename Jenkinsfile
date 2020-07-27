@@ -24,8 +24,10 @@ podTemplate(
                         image: "docker-registry.default.svc:5000/cicd/jenkins-slave-maven",
                         resourceRequestMemory: "1Gi",
                         resourceLimitMemory: "1Gi",
+                )
         ]
 )
+
 
 
         // Pipeline body
