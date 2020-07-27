@@ -113,6 +113,9 @@ podTemplate(
                 sh "${mvnCmd} clean package -DskipTests=true"
               }
 
+
+
+
               // Using Maven run the unit tests
               stage('Unit Tests') {
                 echo "Running Unit Tests"
@@ -153,8 +156,6 @@ podTemplate(
 
               stage('Copy Image to Application Project'){
                  sh "oc tag ${SERVICE_NAME}:latest ${DEV_PROJECT}/${SERVICE_NAME}:${prodTag}"
-
-                 }
               }
 
               // Deploy the built image to the Development Environment.
@@ -291,7 +292,6 @@ podTemplate(
                   }
                 }
               }
-
 
             }
           }
