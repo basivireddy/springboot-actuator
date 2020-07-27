@@ -147,6 +147,8 @@ podTemplate(
                 echo "Building OpenShift container image ${SERVICE_NAME}:${prodTag}"
 
                 // Start Binary Build in OpenShift CICD cluster using the file we just published
+                echo "${artifactId} ${pomVersion}"
+                sh "ls -l target/"
                 sh "oc start-build ${SERVICE_NAME} --follow --from-file=target/${artifactId}-${pomVersion}.jar -n cicd"
                 echo "oc start build complete."
 
