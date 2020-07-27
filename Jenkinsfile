@@ -21,7 +21,7 @@ podTemplate(
         containers: [
                 containerTemplate(
                         name: "jnlp",
-                        image: "docker-registry.default.svc:5000/cicd/jenkins-slave-maven",
+                        image: "image-registry.openshift-image-registry.svc:5000/cicd/jenkins-slave-maven",
                         resourceRequestMemory: "1Gi",
                         resourceLimitMemory: "1Gi",
                 )
