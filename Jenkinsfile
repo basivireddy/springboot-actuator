@@ -221,7 +221,7 @@ podTemplate(
 
 
               stage('Create configMap') {
-                openshift.withCluster('non-prod'){
+                openshift.withCluster(){
                   openshift.withProject( "${DEV_PROJECT}" ) {
                     def configmapSelector = openshift.selector( "cm", "${SERVICE_NAME}")
                     def configmapExists = configmapSelector.exists()
@@ -245,7 +245,7 @@ podTemplate(
 
                             // Load configMap as a volume
               stage('Load configMap as a volume') {
-                openshift.withCluster('non-prod'){
+                openshift.withCluster(){
                   openshift.withProject( "${DEV_PROJECT}" ) {
 
                     openshift.raw("set","volumes dc/${SERVICE_NAME}","--add --overwrite=true \
@@ -254,10 +254,10 @@ podTemplate(
                   }
                 }
               }
-              
+
               // // Set Spring Profile
               stage('Set Environment variables') {
-                openshift.withCluster('non-prod'){
+                openshift.withCluster(){
                   openshift.withProject( "${DEV_PROJECT}" ) {
 
                     openshift.raw("set","env dc/${SERVICE_NAME} JAVA_OPTIONS='-Xms128m -Xmx128m -XX:-TieredCompilation -XX:TieredStopAtLevel=1 -Xss228k'", "-n ${DEV_PROJECT}")
@@ -266,7 +266,7 @@ podTemplate(
               }
 
               stage("Rollout to Developmemt"){
-                openshift.withCluster('non-prod'){
+                openshift.withCluster(){
                   openshift.withProject( "${DEV_PROJECT}" ) {
                     def deployment = openshift.selector('dc', "${SERVICE_NAME}")
                     deployment.rollout().latest()
