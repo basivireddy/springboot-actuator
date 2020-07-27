@@ -1,0 +1,41 @@
+apiVersion: v1
+kind: Template
+parameters:
+- name: APPLICATION_NAME
+  value: springboot-actuator
+- name: CONFIGMAP_NAME
+  value: springboot-actuator
+metadata:
+  name: ${CONFIGMAP_NAME}
+  labels:
+    app: ${APPLICATION_NAME}
+objects:
+- apiVersion: v1
+  kind: ConfigMap
+  metadata:
+    labels:
+      app: ${APPLICATION_NAME}
+    name: ${CONFIGMAP_NAME}
+  data:
+    application.properties: |-
+        spring.jersey.application-path=/
+        server.port=8080
+        management.port=9090
+        spring.jackson.default-property-inclusion=non-null
+        spring.application.name=springboot-actuator
+        #
+        # Actuator properties :
+        management.contextPath=/actuator
+        endpoints.enabled=true
+        endpoints.sensitive=true
+        endpoints.health.enabled=true
+        endpoints.health.sensitive=false
+        endpoints.info.enabled=true
+        endpoints.info.sensitive=false
+        endpoints.prometheus.enabled=true
+        endpoints.prometheus.sensitive=false
+        metrics.export.prometheus.enabled=true
+        management.metrics.distribution.percentiles-histogram[http.server.requests]=true
+        management.metrics.distribution.percentiles[http.server.requests]=0.95,0.99
+        info.app.name=springboot-actuator
+        info.app.description=springboot-actuator project for Spring Boot 

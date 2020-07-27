@@ -1,0 +1,32 @@
+server:
+  port: 8080
+
+spring:
+  main:
+    lazy-initialization: false
+    allow-bean-definition-overriding: true
+  application:
+    name: springboot-actuator
+  profiles:
+    active: dev
+
+
+# all access to actuator endpoints without security
+management:
+  server:
+    port: 9090
+  security:
+    enabled: false
+  # expose actuator endpoint via HTTP for info,health,camelroutes
+  endpoints:
+    web:
+      exposure:
+        include: '*'
+  # show verbose health details (/actuator/info) so you can see Camel information also
+  endpoint:
+    hystrix:
+      stream:
+        enabled: true
+    health:
+      show-details: always
+

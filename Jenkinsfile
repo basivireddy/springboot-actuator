@@ -192,8 +192,8 @@ podTemplate(
                     }
 
                     //Set probes
-                   // openshift.raw("set","probe","dc/${SERVICE_NAME}","--namespace=${DEV_PROJECT}","--liveness","--failure-threshold","3","--initial-delay-seconds","200","--get-url=http://:9090/actuator/health")
-                   // openshift.raw("set","probe","dc/${SERVICE_NAME}","--namespace=${DEV_PROJECT}","--readiness","--failure-threshold 3","--initial-delay-seconds","200","--get-url=http://:9090/actuator/health")
+                    openshift.raw("set","probe","dc/${SERVICE_NAME}","--namespace=${DEV_PROJECT}","--liveness","--failure-threshold","3","--initial-delay-seconds","200","--get-url=http://:9090/actuator/health")
+                    openshift.raw("set","probe","dc/${SERVICE_NAME}","--namespace=${DEV_PROJECT}","--readiness","--failure-threshold 3","--initial-delay-seconds","200","--get-url=http://:9090/actuator/health")
 
                     try {
                       //Create service
@@ -220,12 +220,47 @@ podTemplate(
               }
 
 
+              stage('Create configMap') {
+                openshift.withCluster('non-prod'){
+                  openshift.withProject( "${DEV_PROJECT}" ) {
+                    def configmapSelector = openshift.selector( "cm", "${SERVICE_NAME}")
+                    def configmapExists = configmapSelector.exists()
+
+                    if (configmapExists) {
+                      echo "Configmap ${SERVICE_NAME} exists"
+                      configmapSelector.delete()
+                    }
+
+                    openshift.create("configmap ${SERVICE_NAME}", "--from-file=./openshift/application.yaml")
+
+                    echo "Label ConfigMap"
+
+                    def cm = openshift.selector( "cm", "${SERVICE_NAME}").object()
+                    cm.metadata['labels.app']='${SERVICE_NAME}' // Adjust the model
+                    openshift.apply(cm)
+
+                  }
+                }
+              }
+
+                            // Load configMap as a volume
+              stage('Load configMap as a volume') {
+                openshift.withCluster('non-prod'){
+                  openshift.withProject( "${DEV_PROJECT}" ) {
+
+                    openshift.raw("set","volumes dc/${SERVICE_NAME}","--add --overwrite=true \
+                 --name=config-volume --mount-path=/deployments/config -t configmap \
+                 --configmap-name=${SERVICE_NAME}","-n ${DEV_PROJECT}")
+                  }
+                }
+              }
+              
               // // Set Spring Profile
               stage('Set Environment variables') {
                 openshift.withCluster('non-prod'){
                   openshift.withProject( "${DEV_PROJECT}" ) {
 
-                    openshift.raw("set","env dc/${SERVICE_NAME} JAVA_OPTIONS='-Dspring.profiles.active=openshift-dev -Xverify:none -Xms400m -Xmx800m'", "-n ${DEV_PROJECT}")
+                    openshift.raw("set","env dc/${SERVICE_NAME} JAVA_OPTIONS='-Xms128m -Xmx128m -XX:-TieredCompilation -XX:TieredStopAtLevel=1 -Xss228k'", "-n ${DEV_PROJECT}")
                   }
                 }
               }
