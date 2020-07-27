@@ -55,8 +55,8 @@ podTemplate(
 
             // Define Maven Command. Make sure it points to the correct settings for our Nexus installation
             // The file maven-settings.xml needs to be in the Source Code repository.
-           // def mvnCmd = "mvn -s maven-settings.xml"
-            def mvnCmd = "mvn "
+            def mvnCmd = "mvn -s maven-settings.xml"
+           // def mvnCmd = "mvn "
             echo "mvnCmd: ${mvnCmd}"
 
             dir('.') {
@@ -130,7 +130,7 @@ podTemplate(
               // Publish the built war file to Nexus
               stage('Publish to Nexus') {
                 echo "Publish to Nexus"
-                // sh "${mvnCmd} deploy:deploy-file -DgroupId=${groupId} -DartifactId=${artifactId} -Dversion=${prodTag} -Dpackaging=jar -DrepositoryId=nexus -Durl=http://nexus3.cicd.svc.cluster.local:8081/repository/releases -Dfile=target/${artifactId}-${pomVersion}.jar -DskipTests=true -DpomFile=pom.xml"
+                sh "${mvnCmd} deploy:deploy-file -DgroupId=${groupId} -DartifactId=${artifactId} -Dversion=${prodTag} -Dpackaging=jar -DrepositoryId=nexus -Durl=http://nexus3.cicd.svc.cluster.local:8081/repository/releases -Dfile=target/${artifactId}-${pomVersion}.jar -DskipTests=true -DpomFile=pom.xml"
               }
 
               // Create or replace Image builder artifacts
@@ -274,6 +274,23 @@ podTemplate(
                     timeout(time:10, unit:'MINUTES') {
                       deployment.rollout().status()
                     }
+                  }
+                }
+              }
+
+                            //  Copy Image to Nexus Docker Registry
+              stage('Copy Image to Nexus Docker Registry') {
+                openshift.withCluster() {
+                  openshift.withProject( "${DEV_PROJECT}" ) {
+
+                    def token = openshift.raw("whoami -t")
+                    def SRC_TOKEN = token.out.trim()
+                    withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'nexus-admin',
+                                      usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS']]) {
+
+                      sh "skopeo copy --src-tls-verify=false --dest-tls-verify=false --src-creds openshift:${SRC_TOKEN} --dest-creds $NEXUS_USER:$NEXUS_PASS docker://image-registry.openshift-image-registry.svc:5000/cicd/${DEV_PROJECT}/${SERVICE_NAME}:${prodTag} docker://nexus-registry.cicd.svc.cluster.local:5000/${SERVICE_NAME}:${prodTag}"
+                    }
+
                   }
                 }
               }
