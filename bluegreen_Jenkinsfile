@@ -147,7 +147,7 @@ podTemplate(
 
 
 	stage('Switch over to new Version') {
-		  openshift.withCluster('non-prod'){
+		  openshift.withCluster(){
             openshift.withProject( "${TARGET_NAMESPACE}" ) {
 				// input "Switch Production?"
 				echo "Switching Production application to ${destApp}."
