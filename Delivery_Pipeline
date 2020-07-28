@@ -1,0 +1,443 @@
+// ================================================================
+// Name: Release pipeline
+//
+// Description: This pipeline promotes and deploys specified releases
+//        through all target environments
+//
+// Usage: Pipeline needs to be configured with service specific
+//        information
+// ================================================================
+
+
+// ================================================================
+// Define a pod template to use for the Jenkins slave pod
+// jenkins-slave-maven , skopeo
+// ================================================================
+
+podTemplate(
+        label: "jenkins-slave-maven",
+        cloud: "openshift",
+        inheritFrom: "maven",
+        containers: [
+                containerTemplate(
+                        name: "jnlp",
+                        image: "image-registry.openshift-image-registry.svc:5000/cicd/jenkins-slave-maven",
+                        resourceRequestMemory: "1Gi",
+                        resourceLimitMemory: "1Gi",
+                )
+        ]
+)
+
+
+
+        {
+
+            parameters {
+                string(name: 'RELEASE_VERSION', description: 'What release should we deploy?')
+                string(name: 'TARGET_NAMESPACE', defaultValue: '', description: 'name of the namespace where need be release?', ),
+            }
+            def SERVICE_NAME = "springboot-actuator" // Name of your service
+            def TARGET_NAMESPACE = "${params.TARGET_NAMESPACE}"
+
+            // Resources to be assigned to your deployment
+            def CPU_REQUESTS = "250m"
+            def CPU_LIMITS = "500m"
+            def MEM_REQUESTS = "512Mi"
+            def MEM_LIMITS = "1Gi"
+            def REPLICAS = "1"
+
+
+            def VERSION = params.RELEASE_VERSION
+
+            def NEXUS_REGISTRY = "nexus-registry.cicd.svc.cluster.local:5000"
+            def OCP_REGISTRY = "docker-registry-default.apps.mgmt.npd.msa.libgbl.biz:443"
+
+
+
+
+            //Common steps used in delivery pipeline
+            def promoteImage = { String service_name, String version, String project, String environment, String cluster,
+                                 String nexus_registry, String target_registry  ->
+                stage("Promote Image ${version} to ${environment.toUpperCase()}") {
+                    openshift.withCluster(cluster) {
+                        def token = openshift.raw("whoami -t")
+                        def DEST_TOKEN = token.out.trim()
+                        withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'nexus-admin',
+                                          usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS']]) {
+                            sh "skopeo copy --src-tls-verify=false --dest-tls-verify=false --src-creds $NEXUS_USER:$NEXUS_PASS --dest-creds openshift:${DEST_TOKEN} docker://${nexus_registry}/${service_name}:${version} docker://${target_registry}/${project}/${service_name}:${version}"
+                        }
+                    }
+                }
+            }
+
+            def DEST_APP = ""
+            def ACTIVE_APP = ""
+
+            def configureDeployment = { String service_name, String version, String project, String environment, String cluster,
+                                        String cpu_requests, String cpu_limits, String mem_requests, String mem_limits ->
+
+                // Blue/Green Deployment
+                // Default to green, we will check what is the correct color to deploy
+                def destApp   = "${service_name}-green"
+                def activeApp = ""
+
+                stage('Check active application') {
+                    openshift.withCluster(cluster){
+                        openshift.withProject(project) {
+                            try {
+                                def service = openshift.selector( "svc", "${service_name}").object()
+                                activeApp = service.spec.selector.deploymentconfig
+                                echo activeApp
+                            } catch(e) {
+                                echo e.getMessage()
+                                if(!e.getMessage().contains("NotFound")){
+                                    throw e
+                                }
+                            }
+
+                            if (activeApp == "${service_name}-green") {
+                                destApp = "${service_name}-blue"
+                            } else {
+                                destApp = "${service_name}-green"
+                            }
+
+                            echo "Active Application:      " + activeApp
+                            echo "Destination Application: " + destApp
+                            DEST_APP = destApp
+                            ACTIVE_APP = activeApp
+                        }
+                    }
+                }
+
+
+
+                stage('Configure Deployment') {
+                    openshift.withCluster(cluster){
+                        echo "Using openshift cluster ${openshift.cluster()}"
+                        openshift.withProject(project){
+                            def deploymentSelector = openshift.selector( "dc", "${destApp}")
+                            def deploymentExists = deploymentSelector.exists()
+                            if (!deploymentExists) {
+                                echo "Deployment ${destApp} does not exist"
+                                openshift.newApp("${project}/${service_name}:0.0.0", "--name=${destApp}", "--allow-missing-imagestream-tags=true","--namespace=${project}")
+
+                            }
+
+                            // Make sure labels are set properly on deployment config to group them in UI
+                            openshift.raw("label","dc/${destApp}","app=${service_name}","--overwrite")
+
+                            // Disable triggers, we want to control manually
+                            openshift.raw("set","triggers","dc/${destApp}","--remove-all","--namespace","${project}")
+
+                            //Set probes
+                            openshift.raw("set","probe","dc/${destApp}","--namespace=${project}","--liveness","--failure-threshold","3","--initial-delay-seconds","200","--get-url=http://:9090/actuator/health")
+                            openshift.raw("set","probe","dc/${destApp}","--namespace=${project}","--readiness","--failure-threshold 3","--initial-delay-seconds","200","--get-url=http://:9090/actuator/health")
+
+                            // Set resource requirements
+                            try {
+                                def result = openshift.raw("set","resources","dc/${destApp}","--limits=cpu=${cpu_limits},memory=${mem_limits}","--requests=cpu=${cpu_requests},memory=${mem_requests}","--namespace=${project}")
+                            } catch(e) {
+                                echo e.getMessage()
+                                if(!e.getMessage().contains("info:")){
+                                    throw e
+                                }
+                            }
+
+
+                            def serviceExists = openshift.selector( "svc", "${service_name}").exists()
+                            if(!serviceExists){
+                                //Create service
+                                openshift.raw("expose","dc ${destApp}","--name ${service_name}","--port 8080,9090", "--protocol=TCP","-n ${project}")
+                                def service = openshift.selector( "svc", "${service_name}").object()
+                                service.spec.ports[0].name='8080-tcp'
+                                service.spec.ports[1].name='9090-tcp'
+                                service.spec.selector.app = "${destApp}"
+                                openshift.apply(service)
+                            }
+
+                            if ("${CREATE_ROUTE}" == "true") {
+                                try {
+                                    openshift.create("route edge ${service_name}", "--service=${service_name}", "--port=8080-tcp", "--insecure-policy=Redirect")
+                                } catch(e) {
+                                    echo e.getMessage()
+                                    if(!e.getMessage().contains("AlreadyExists")){
+                                        throw e
+                                    }
+                                }
+                            }
+
+                            //Always create mgmt route for testing on non-prod environments
+                            if(cluster == 'non-prod'){
+                                try {
+                                    def template = openshift.withProject( 'msp-user-objects' ) {
+                                        openshift.selector('template','msp-mgmt-route-non-prod').object()
+                                    }
+                                    openshift.create( openshift.process( template, "-p", "NAMESPACE=${project}", "APP=${service_name}", "TARGET_SERVICE=${service_name}", "TARGET_PORT=8080-tcp" ) )
+                                } catch(e) {
+                                    echo e.getMessage()
+                                    if(!e.getMessage().contains("AlreadyExists")){
+                                        throw e
+                                    }
+                                }
+                            }
+
+                        }
+                    }
+                }
+
+                stage('Configure Image to Deploy') {
+                    openshift.withCluster('non-prod'){
+                        openshift.withProject(project){
+                            //  Update the Image on the Deployment Config
+                            openshift.raw("set","image dc/${destApp}","${destApp}=${service_name}:${version}","--source=imagestreamtag","-n ${project}")
+                        }
+                    }
+                }
+            }
+
+
+            def configureApplication = { String service_name, String version, String project, String environment, String cluster ->
+                // Re-Create configMap.
+                stage('Create ConfigMap') {
+                    openshift.withCluster(cluster){
+                        openshift.withProject("${PROJECT_PREFIX}-dev") {
+                            echo "Creating ConfigMap"
+                            configmap = openshift.selector( "cm", "${service_name}")
+                            def obj = configmap.object( exportable:true )
+
+                            openshift.withProject(project) {
+                                configmap_sit = openshift.selector( "cm", "${DEST_APP}")
+                                configmap_sit.delete('--ignore-not-found')
+                                obj.metadata.name = "${DEST_APP}"
+                                openshift.create(obj)
+                            }
+                        }
+
+                        openshift.withProject(project) {
+                            echo "Label ConfigMap"
+                            def cm = openshift.selector( "cm", "${DEST_APP}").object()
+                            cm.metadata['labels.app']="${DEST_APP}" // Adjust the model
+                            openshift.apply(cm)
+                        }
+                    }
+                }
+
+                stage('Create Logback-ConfigMap') {
+                    openshift.withCluster(cluster){
+
+                        openshift.withProject("${PROJECT_PREFIX}-dev") {
+                            echo "Creating ConfigMap"
+                            configmap = openshift.selector( "cm", "logback-mapping")
+                            def obj = configmap.object( exportable:true )
+
+                            openshift.withProject(project) {
+                                configmap_sit = openshift.selector( "cm", "logback-mapping")
+                                def configmapExists = configmap_sit.exists()
+
+                                if (configmapExists) {
+                                    echo "Configmap logback-mapping exists"
+                                }
+                                else {
+
+                                    openshift.create(obj)
+                                }
+                            }
+                        }
+
+                    }
+                }
+
+                // Load configMap as a volume
+                stage('Load ConfigMap as a volume') {
+                    openshift.withCluster(cluster){
+                        openshift.withProject(project) {
+                            openshift.raw("set","volumes dc/${DEST_APP}","--add --overwrite=true \
+           --name=config-volume --mount-path=/deployments/config -t configmap \
+           --configmap-name=${DEST_APP}","-n ${project}")
+                        }
+                    }
+                }
+
+                // Load logging - configMap as a volume
+                stage('Load logging configMap as a volume') {
+                    openshift.withCluster(cluster){
+                        openshift.withProject(project) {
+
+                            openshift.raw("set","volumes dc/${DEST_APP}","--add --overwrite=true \
+             --name=logconfig-volume --mount-path=/deployments/logconfig -t configmap \
+             --configmap-name=logback-mapping","-n ${project}")
+                        }
+                    }
+                }
+
+                // Set Spring Profile
+                stage('Set Environment variables') {
+                    openshift.withCluster(cluster){
+                        openshift.withProject(project) {
+                            openshift.raw("set","env dc/${DEST_APP} JAVA_OPTIONS='-Dspring.profiles.active=openshift-${environment} -Xverify:none -Xms200m -Xmx800m'", "-n ${project}")
+                            openshift.raw("set","env dc/${DEST_APP} UNSET_PROXY='true'", "-n ${project}")
+                        }
+                    }
+                }
+            }
+
+            def deployApplication = { String service_name, String version, String project, String environment, String cluster, String replicas ->
+                stage("Deployment to ${environment.toUpperCase()}") {
+                    openshift.withCluster(cluster){
+                        openshift.withProject(project) {
+                            // Deploy the inactive application.
+                            def deployment = openshift.selector('dc', "${DEST_APP}")
+                            deployment.rollout().latest()
+                            openshift.raw("scale","dc/${DEST_APP}","--replicas=${replicas}", "-n ${project}")
+
+                            timeout(time:10, unit:'MINUTES') {
+                                deployment.rollout().status()
+                                deployment.related( 'pods' ).untilEach(1) {
+                                    return it.object().status.containerStatuses[0].ready
+                                }
+                            }
+                        }
+
+                        echo '${DEST_APP} is running and it passed readiness check!'
+
+                    }
+                }
+
+                stage("Activate ${DEST_APP}") {
+                    try {
+                        timeout(time:1, unit:'DAYS') {
+                            input message: "Activate ${DEST_APP} on ${environment.toUpperCase()}. Approve?", id: "approval"
+                            echo "Switching active application to ${DEST_APP}."
+                            openshift.withCluster(cluster){
+                                openshift.withProject(project) {
+                                    def service = openshift.selector( "svc", "${service_name}").object()
+                                    service.spec.selector.deploymentconfig = "${DEST_APP}"
+                                    service.spec.selector.app = "${DEST_APP}"
+                                    openshift.apply(service)
+
+                                    //scale down inactive deployment
+                                    if("${ACTIVE_APP}"!="") {
+                                        openshift.raw("scale","dc/${ACTIVE_APP}","--replicas=0", "-n ${project}")
+                                    }
+                                }
+                            }
+                        }
+                    } catch (Exception e){
+                        echo "Abort option was selected"
+                        openshift.withCluster(cluster){
+                            openshift.withProject(project) {
+                                //scale down inactive deployment
+                                openshift.raw("scale","dc/${DEST_APP}","--replicas=0", "-n ${project}")
+                            }
+                        }
+
+                        currentBuild.result = 'ABORTED';
+                        return
+                    }
+
+                }
+
+            }
+
+            // ===============================
+            // Actual delivery pipeline
+            // ===============================
+
+            node('lgi-jenkins-slave-maven') {
+
+                def deliverUAT = false
+                def deliverORT = false
+                def deliverPROD = false
+
+                // =======================================
+                // SIT Delivery
+                // =======================================
+                promoteImage(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-sit", "sit","non-prod", NEXUS_REGISTRY, NON_PROD_REGISTRY)
+                configureDeployment(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-sit", "sit","non-prod",CPU_REQUESTS, CPU_LIMITS, MEM_REQUESTS, MEM_LIMITS)
+                configureApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-sit", "sit","non-prod")
+                deployApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-sit", "sit","non-prod",REPLICAS)
+
+                // Custom tests?
+
+                // Manual promotion step checkpoint
+                try {
+                    stage("Deploy to UAT?"){
+                        deliverUAT = input(
+                                id: 'deployUAT', message: "Deliver release ${RELEASE_VERSION} to UAT?", parameters: [
+                                [$class: 'BooleanParameterDefinition', defaultValue: false, description: '', name: "Yes, proceed"]
+                        ])
+                    }
+                } catch(err) {
+                    deliverUAT = false
+                    echo "Delivery to UAT aborted"
+                    return
+                }
+
+
+                // =======================================
+                // UAT Delivery
+                // =======================================
+                if(deliverUAT == true) {
+                    promoteImage(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-uat", "uat","non-prod", NEXUS_REGISTRY, NON_PROD_REGISTRY)
+                    configureDeployment(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-uat", "uat","non-prod",CPU_REQUESTS, CPU_LIMITS, MEM_REQUESTS, MEM_LIMITS)
+                    configureApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-uat", "uat","non-prod")
+                    deployApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-uat", "uat","non-prod",REPLICAS)
+
+                    // Custom tests?
+                }
+
+                try {
+                    stage("Deploy to ORT?"){
+                        deliverORT = input(
+                                id: 'deployORT', message: "Deliver release ${RELEASE_VERSION} to ORT?", parameters: [
+                                [$class: 'BooleanParameterDefinition', defaultValue: false, description: '', name: "Yes, proceed"]
+                        ])
+                    }
+                } catch(err) {
+                    deliverORT = false
+                    echo "Delivery to ORT aborted"
+                    return
+                }
+
+
+                // =======================================
+                // ORT Delivery
+                // =======================================
+
+                if(deliverORT == true){
+                    promoteImage(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-ort", "ort","non-prod", NEXUS_REGISTRY, NON_PROD_REGISTRY)
+                    configureDeployment(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-ort", "ort","non-prod",CPU_REQUESTS, CPU_LIMITS, MEM_REQUESTS, MEM_LIMITS)
+                    configureApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-ort", "ort","non-prod")
+                    deployApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-ort", "ort","non-prod",REPLICAS)
+
+                    // Custom tests?
+                }
+
+                try {
+                    stage("Deploy to PROD?"){
+                        deliverPROD = input(
+                                id: 'deployPROD', message: "Deliver release ${RELEASE_VERSION} to PROD?", parameters: [
+                                [$class: 'BooleanParameterDefinition', defaultValue: false, description: '', name: "Yes, proceed"]
+                        ])
+                    }
+                } catch(err) {
+                    deliverPROD = false
+                    echo "Delivery to PROD aborted"
+                    return
+                }
+
+
+
+                // =======================================
+                // PROD Delivery
+                // =======================================
+
+                if(deliverPROD == true){
+                    promoteImage(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-prod", "prod","prod", NEXUS_REGISTRY, PROD_REGISTRY)
+                    configureDeployment(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-prod", "prod","prod",CPU_REQUESTS, CPU_LIMITS, MEM_REQUESTS, MEM_LIMITS)
+                    configureApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-prod", "prod","prod")
+                    deployApplication(SERVICE_NAME, VERSION,"${PROJECT_PREFIX}-prod", "prod","prod",REPLICAS)
+                }
+
+            }
+        }

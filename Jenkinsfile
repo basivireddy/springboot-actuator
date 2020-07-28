@@ -288,7 +288,7 @@ podTemplate(
                     withCredentials([[$class: 'UsernamePasswordMultiBinding', credentialsId: 'nexus-admin',
                                       usernameVariable: 'NEXUS_USER', passwordVariable: 'NEXUS_PASS']]) {
 
-                      sh "skopeo copy --src-tls-verify=false --dest-tls-verify=false --src-creds openshift:${SRC_TOKEN} --dest-creds $NEXUS_USER:$NEXUS_PASS docker://image-registry.openshift-image-registry.svc:5000/cicd/${DEV_PROJECT}/${SERVICE_NAME}:${prodTag} docker://nexus-registry.cicd.svc.cluster.local:5000/${SERVICE_NAME}:${prodTag}"
+                      sh "skopeo copy --src-tls-verify=false --dest-tls-verify=false --src-creds openshift:${SRC_TOKEN} --dest-creds $NEXUS_USER:$NEXUS_PASS docker://image-registry.openshift-image-registry.svc:5000/${DEV_PROJECT}/${SERVICE_NAME}:${prodTag} docker://nexus-registry.cicd.svc.cluster.local:5000/${SERVICE_NAME}:${prodTag}"
                     }
 
                   }
