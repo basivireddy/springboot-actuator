@@ -42,31 +42,11 @@ objects:
             value: -Xms256m -Xmx256m -XX:-TieredCompilation -XX:TieredStopAtLevel=1 -Xss228k -XX:CompressedClassSpaceSize=25m
           image: ${APPLICATION_NAME}
           imagePullPolicy: Always
-          livenessProbe:
-            failureThreshold: 3
-            httpGet:
-              path: /actuator/info
-              port: 9090
-              scheme: HTTP
-            initialDelaySeconds: 450
-            periodSeconds: 60
-            successThreshold: 1
-            timeoutSeconds: 60
           name: ${APPLICATION_NAME}-${APPLICATION_PIPELINE}
           ports:
           - containerPort: 8080
             name: http
             protocol: TCP
-          readinessProbe:
-            failureThreshold: 3
-            httpGet:
-              path: /actuator/health
-              port: 9090
-              scheme: HTTP
-            initialDelaySeconds: 450
-            periodSeconds: 60
-            successThreshold: 1
-            timeoutSeconds: 60
           resources:
             limits:
               cpu: 500m
