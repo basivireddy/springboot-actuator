@@ -130,7 +130,7 @@ podTemplate(
               // Publish the built war file to Nexus
               stage('Publish to Nexus') {
                 echo "Publish to Nexus"
-                // sh "${mvnCmd} deploy:deploy-file -DgroupId=${groupId} -DartifactId=${artifactId} -Dversion=${prodTag} -Dpackaging=jar -DrepositoryId=nexus -Durl=http://nexus3.cicd.svc.cluster.local:8081/repository/releases -Dfile=target/${SERVICE_NAME}-${pomVersion}.jar -DskipTests=true -DpomFile=pom.xml"
+                sh "${mvnCmd} deploy:deploy-file -DgroupId=${groupId} -DartifactId=${artifactId} -Dversion=${devTag} -Dpackaging=jar -DrepositoryId=nexus -Durl=http://nexus3.cicd.svc.cluster.local:8081/repository/releases -Dfile=target/${artifactId}-${pomVersion}.jar -DskipTests=true -DpomFile=pom.xml"
               }
 
               // Create or replace Image builder artifacts
@@ -148,7 +148,7 @@ podTemplate(
                 // Start Binary Build in OpenShift CICD cluster using the file we just published
                 echo "${artifactId} ${pomVersion}"
                 sh "ls -l target/"
-                sh "oc start-build ${SERVICE_NAME} --follow --from-file=target/${SERVICE_NAME}-${pomVersion}.jar -n cicd"
+                sh "oc start-build ${SERVICE_NAME} --follow --from-file=target/${artifactId}-${pomVersion}.jar -n cicd"
                 echo "oc start build complete."
 
                 // Tag the latest image to prodTag
