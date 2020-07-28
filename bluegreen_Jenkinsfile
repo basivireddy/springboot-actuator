@@ -1,0 +1,191 @@
+podTemplate(
+	label: "jenkins-slave-maven",
+	cloud: "openshift",
+	inheritFrom: "maven",
+	containers: [
+	  containerTemplate(
+		name: "jnlp",
+		image: "docker-registry.default.svc:5000/cicd/jenkins-slave-maven",
+		resourceRequestMemory: "1Gi",
+		resourceLimitMemory: "2Gi",
+		)
+	  ]
+)
+{
+	  node('jenkins-slave-maven') {
+
+		  properties([
+			parameters([
+			  string(name: 'IMAGE_VERSION', defaultValue: '', description: 'Version of application need be deployed', ),
+			  string(name: 'TARGET_NAMESPACE', defaultValue: '', description: 'name of the namespace where need be release?  ex: ie-product-sit', ),
+			  string(name: 'ENV', defaultValue: '', description: 'environment  ex: sit', )
+         ]),
+        [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator', artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '10']]
+      ])
+		  def APPLICATION_NAME = "springboot-actuator"
+		  def ENV = "${params.ENV}"
+		  def TARGET_NAMESPACE = "${params.TARGET_NAMESPACE}"
+		  def releaseTag = "${params.IMAGE_VERSION}"
+		  def CONFDIR = "openshift/"+ENV
+		  def BLUEGREENCONFDIR = "openshift/"+ENV
+		  def NEXUS_CREDID = "nexus_cred"
+		  def activeApp = APPLICATION_NAME+"-blue"
+		  def propertiesfile = "svc-green.app.properties"
+		  def destApp   = APPLICATION_NAME+"-green"
+		  def CONFIGMAP_NAME = APPLICATION_NAME+"-green-properties"
+		  def APPLICATION_PIPELINE = "green"
+		  def OCPDOMAIN = "apps.cluster-0a87.0a87.sandbox507.opentlc.com"
+
+		  echo "ENV: ${ENV}, TARGET_NAMESPACE: ${TARGET_NAMESPACE}, releaseTag: ${releaseTag} "
+
+		stage('Code Checkout'){ 
+			checkout scm
+		}   
+
+		stage('Copy image from Nexus') {
+			  openshift.withCluster() {
+			def token = openshift.raw("whoami -t")
+			def DEST_TOKEN = token.out.trim()
+			withCredentials([usernamePassword(credentialsId: NEXUS_CREDID , passwordVariable: 'nexus_pass', usernameVariable: 'nexus_user')]) {
+			  sh "skopeo copy --src-tls-verify=false --dest-tls-verify=false --src-creds ${nexus_user}:${nexus_pass} --dest-creds openshift:${DEST_TOKEN} docker://nexus-registry.cicd.svc.cluster.local:5000/${APPLICATION_NAME}:${releaseTag} docker://image-registry.openshift-image-registry.svc:5000/openshift/${APPLICATION_NAME}:${releaseTag}"
+			}					
+			  }
+		  }
+
+	   stage('Blue/Green Production Deployment'){
+		openshift.withCluster(){
+			openshift.withProject( "${TARGET_NAMESPACE}" ){
+			   def switchserviceSelector = openshift.selector("service","${APPLICATION_NAME}")
+			   def switchserviceExists = switchserviceSelector.exists()
+			   if (!switchserviceExists){
+			      echo "service ${APPLICATION_NAME} does not exist"
+			      openshift.create(openshift.process( readFile( "./${BLUEGREENCONFDIR}/bluegreen/svc-switchservices.yml" ), "-p", "APPLICATION_NAME=${APPLICATION_NAME}", "-p", "APPLICATION_PIPELINE=${APPLICATION_PIPELINE}", "-p", "TARGET_NAMESPACE=${TARGET_NAMESPACE}" ))
+			   }
+
+               openshift.apply(openshift.process( readFile( "./${BLUEGREENCONFDIR}/bluegreen/svc-route.yml" ), "-p", "OCPDOMAIN=${OCPDOMAIN}", "-p", "APPLICATION_NAME=${APPLICATION_NAME}", "-p", "TARGET_NAMESPACE=${TARGET_NAMESPACE}" ))
+
+               def switchservice1 = openshift.selector("service","${APPLICATION_NAME}").object()
+               echo "activeDC: ${switchservice1.spec.selector.deploymentconfig}"
+               activeApp = switchservice1.spec.selector.deploymentconfig
+               if (activeApp == APPLICATION_NAME+"-green") {
+					destApp = APPLICATION_NAME+"-blue"
+					propertiesfile = "svc-blue.app.properties"
+					CONFIGMAP_NAME = APPLICATION_NAME+"-blue-properties"
+					APPLICATION_PIPELINE = "blue"
+			   }
+			
+			   echo "Active Application:      " + activeApp
+			   echo "Destination Application: " + destApp
+               
+               // Update the Config Map
+
+               openshift.apply(openshift.process( readFile( "./${CONFDIR}/configmap.yml" ), "-p", "APPLICATION_NAME=${APPLICATION_NAME}", "-p", "CONFIGMAP_NAME=${CONFIGMAP_NAME}" ))
+
+               //Deleting dc to overcome the Error: metadata.resourceVersion: Invalid value: 0x0: must be specified for an update
+
+               echo "delete dc"
+               def destDCSelector = openshift.selector("dc","${destApp}")
+               def destDCExists = destDCSelector.exists()
+			   if(destDCExists){
+				  openshift.raw("delete", "dc/${destApp}", "-n ${TARGET_NAMESPACE}")
+			   }
+               
+
+               openshift.apply(openshift.process( readFile( "./${BLUEGREENCONFDIR}/bluegreen/svc-deployment.yml" ), "--param-file=./${BLUEGREENCONFDIR}/bluegreen/${propertiesfile}", "-p", "OCPDOMAIN=${OCPDOMAIN}", "-p", "ENV=${ENV}", "-p", "TAG=${releaseTag}", "-p", "TARGET_NAMESPACE=${TARGET_NAMESPACE}" ))               
+
+            }
+		}
+	   }
+
+	  stage('Updating image') {
+			openshift.withCluster(){
+				openshift.withProject( "${TARGET_NAMESPACE}" ){
+			  //  Update the Image on the Production Deployment Config
+			  openshift.raw("set","image dc/${destApp}","${destApp}=docker-registry.default.svc:5000/openshift/${APPLICATION_NAME}:${releaseTag}","-n ${TARGET_NAMESPACE}")
+				}
+			}
+	  }
+
+    stage('Verify Deployment'){
+        echo "verify deployment"
+        openshift.withCluster(){
+          openshift.withProject( "${TARGET_NAMESPACE}" ) {
+            def DeploymentVersion = openshift.selector('dc',"${destApp}").object().status.latestVersion
+            echo "Previous DeploymentVersion: ${DeploymentVersion}" 
+            try {
+              def deployment = openshift.selector('dc', "${destApp}")
+              echo "rollout deployment"
+              deployment.rollout().latest()
+            } catch(e) {
+                echo e.getMessage()
+                if(e.getMessage().contains("already in progress")){
+                  openshift.raw("scale","dc/${destApp}", "--replicas=0", "-n ${TARGET_NAMESPACE}")
+                  sleep 120
+                  throw e
+                }
+            }
+            def latestDeploymentVersion = openshift.selector('dc',"${destApp}").object().status.latestVersion
+            def rc = openshift.selector('rc', "${destApp}-${latestDeploymentVersion}")
+            def props = readProperties  file: "${BLUEGREENCONFDIR}/bluegreen/${propertiesfile}"
+            def REPLICAS= props['REPLICAS']
+            openshift.raw("scale","dc/${destApp}","--replicas=${REPLICAS}","-n ${TARGET_NAMESPACE}")
+            echo "latestDeploymentVersion: ${latestDeploymentVersion}, rc: ${rc}"
+            timeout(time:15, unit:'MINUTES') {
+                        rc.untilEach(1){
+                            def rcMap = it.object()
+                            return (rcMap.status.replicas.equals(rcMap.status.readyReplicas))
+                        }
+            }           
+            echo "${destApp} is running and it passed readiness check!"
+        }
+      }
+    }
+
+
+	  stage('Create Routes') {
+		openshift.withCluster(){
+			  openshift.withProject( "${TARGET_NAMESPACE}" ) {
+					// Always create a management route so that developers can test
+				try {
+				  def template = openshift.withProject( 'msp-user-objects' ) {
+									  openshift.selector('template','msp-mgmt-route-non-prod').object()
+								  }
+				  //openshift.create( openshift.process( template, "-p", "NAMESPACE=${TARGET_NAMESPACE}", "APP=${destApp}9090", "TARGET_SERVICE=${destApp}", "TARGET_PORT=9090-tcp" ) )
+				  openshift.create( openshift.process( template, "-p", "NAMESPACE=${TARGET_NAMESPACE}", "APP=${destApp}", "TARGET_SERVICE=${destApp}", "TARGET_PORT=8080-tcp" ) )
+				  openshift.create( openshift.process( template, "-p", "NAMESPACE=${TARGET_NAMESPACE}", "APP=${APPLICATION_NAME}", "TARGET_SERVICE=${APPLICATION_NAME}", "TARGET_PORT=8080-tcp" ) )
+				} catch(e) {
+				  echo e.getMessage()
+				  if(!e.getMessage().contains("AlreadyExists")){
+					throw e
+				  }
+				}
+				
+			  }
+		  }
+
+	  }
+		
+		stage('Sanity Check'){
+			echo "sanity test : ${destApp}"
+		}
+
+
+	stage('Switch over to new Version') {
+		  openshift.withCluster('non-prod'){
+            openshift.withProject( "${TARGET_NAMESPACE}" ) {
+				// input "Switch Production?"
+				echo "Switching Production application to ${destApp}."
+				openshift.apply(openshift.process(readFile( "./${BLUEGREENCONFDIR}/bluegreen/svc-switchservices.yml" ), "-p", "APPLICATION_NAME=${APPLICATION_NAME}", "-p", "APPLICATION_PIPELINE=${APPLICATION_PIPELINE}" ))
+				sleep 60
+                def activeDCSelector = openshift.selector("dc","${activeApp}")
+                def activeDCExists = activeDCSelector.exists()
+				if(activeDCExists){
+				  openshift.raw("scale","dc/${activeApp}","--replicas=0","-n ${TARGET_NAMESPACE}")
+				}
+			}
+	     }
+     }
+		
+	}
+}
+ 
