@@ -5,7 +5,7 @@ podTemplate(
 	containers: [
 	  containerTemplate(
 		name: "jnlp",
-		image: "docker-registry.default.svc:5000/cicd/jenkins-slave-maven",
+		image: "image-registry.openshift-image-registry.svc:5000/cicd/jenkins-slave-maven",
 		resourceRequestMemory: "1Gi",
 		resourceLimitMemory: "1Gi",
 		)
@@ -101,7 +101,7 @@ podTemplate(
 			openshift.withCluster(){
 				openshift.withProject( "${TARGET_NAMESPACE}" ){
 			  //  Update the Image on the Production Deployment Config
-			  openshift.raw("set","image dc/${destApp}","${destApp}=docker-registry.default.svc:5000/openshift/${APPLICATION_NAME}:${releaseTag}","-n ${TARGET_NAMESPACE}")
+			  openshift.raw("set","image dc/${destApp}","${destApp}=image-registry.openshift-image-registry.svc:5000/openshift/${APPLICATION_NAME}:${releaseTag}","-n ${TARGET_NAMESPACE}")
 				}
 			}
 	  }
