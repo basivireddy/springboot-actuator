@@ -7,7 +7,7 @@ podTemplate(
 		name: "jnlp",
 		image: "docker-registry.default.svc:5000/cicd/jenkins-slave-maven",
 		resourceRequestMemory: "1Gi",
-		resourceLimitMemory: "2Gi",
+		resourceLimitMemory: "1Gi",
 		)
 	  ]
 )
@@ -17,7 +17,7 @@ podTemplate(
 		  properties([
 			parameters([
 			  string(name: 'IMAGE_VERSION', defaultValue: '', description: 'Version of application need be deployed', ),
-			  string(name: 'TARGET_NAMESPACE', defaultValue: '', description: 'name of the namespace where need be release?  ex: ie-product-sit', ),
+			  string(name: 'TARGET_NAMESPACE', defaultValue: '', description: 'name of the namespace where need be release?', ),
 			  string(name: 'ENV', defaultValue: '', description: 'environment  ex: sit', )
          ]),
         [$class: 'BuildDiscarderProperty', strategy: [$class: 'LogRotator', artifactDaysToKeepStr: '', artifactNumToKeepStr: '', daysToKeepStr: '', numToKeepStr: '10']]
@@ -140,30 +140,6 @@ podTemplate(
         }
       }
     }
-
-
-	  stage('Create Routes') {
-		openshift.withCluster(){
-			  openshift.withProject( "${TARGET_NAMESPACE}" ) {
-					// Always create a management route so that developers can test
-				try {
-				  def template = openshift.withProject( 'msp-user-objects' ) {
-									  openshift.selector('template','msp-mgmt-route-non-prod').object()
-								  }
-				  //openshift.create( openshift.process( template, "-p", "NAMESPACE=${TARGET_NAMESPACE}", "APP=${destApp}9090", "TARGET_SERVICE=${destApp}", "TARGET_PORT=9090-tcp" ) )
-				  openshift.create( openshift.process( template, "-p", "NAMESPACE=${TARGET_NAMESPACE}", "APP=${destApp}", "TARGET_SERVICE=${destApp}", "TARGET_PORT=8080-tcp" ) )
-				  openshift.create( openshift.process( template, "-p", "NAMESPACE=${TARGET_NAMESPACE}", "APP=${APPLICATION_NAME}", "TARGET_SERVICE=${APPLICATION_NAME}", "TARGET_PORT=8080-tcp" ) )
-				} catch(e) {
-				  echo e.getMessage()
-				  if(!e.getMessage().contains("AlreadyExists")){
-					throw e
-				  }
-				}
-				
-			  }
-		  }
-
-	  }
 		
 		stage('Sanity Check'){
 			echo "sanity test : ${destApp}"
