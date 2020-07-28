@@ -28,7 +28,7 @@ podTemplate(
 		  def releaseTag = "${params.IMAGE_VERSION}"
 		  def CONFDIR = "openshift/"+ENV
 		  def BLUEGREENCONFDIR = "openshift/"+ENV
-		  def NEXUS_CREDID = "nexus_cred"
+		  def NEXUS_CREDID = "nexus-admin"
 		  def activeApp = APPLICATION_NAME+"-blue"
 		  def propertiesfile = "svc-green.app.properties"
 		  def destApp   = APPLICATION_NAME+"-green"
