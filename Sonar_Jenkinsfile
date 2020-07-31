@@ -130,7 +130,7 @@ podTemplate(
 		        def SONAR_API_RESPONSE = "curl -k -X POST $SONAR_URL/api/qualitygates/project_status?projectKey=$PROJECTKEY"
                 def CMD_OUTPUT = sh returnStdout: true, script: "${SONAR_API_RESPONSE}"
 		        def qualitygate =  readJSON text: CMD_OUTPUT
- 
+                echo "${CMD_OUTPUT}  ${qualitygate}"
                 sh "echo Quality gate shows ${qualitygate.projectStatus.status}" 
 		        if(qualitygate.projectStatus.status == "OK"){
 					echo "Sonar Quality check passed."
