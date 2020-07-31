@@ -124,7 +124,7 @@ podTemplate(
               stage('Code Analysis') {
                 echo "Running Code Analysis"
                 // sh "${mvnCmd} sonar:sonar -Dsonar.projectName=${SERVICE_NAME} -Dsonar.projectVersion=${prodTag}"
-                sh "mvn -s configuration/settings.xml clean install sonar:sonar -Dsonar.scm.disabled=true -Dsonar.sources=src/main "
+                sh "${mvnCmd} clean install sonar:sonar -Dsonar.scm.disabled=true -Dsonar.sources=src/main "
 	            def GROUP_ID = "com.example"
 	            PROJECTKEY="$GROUP_ID:$SERVICE_NAME"
 		        def SONAR_API_RESPONSE = "curl -k -X POST $SONAR_URL/api/qualitygates/project_status?projectKey=$PROJECTKEY"
