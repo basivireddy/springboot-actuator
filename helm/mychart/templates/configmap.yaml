@@ -1,0 +1,23 @@
+{{/* Environment specific configuration files */}}
+{{- $envConfigPattern := cat "containers/*/config-map/" .Values.global.build.env "/**" | nospace }}
+{{- $envCount := .Files.Glob $envConfigPattern | len }}
+
+
+{{- if (ne $envCount 0) }}
+---
+apiVersion: {{ $.Values.configMapApiVersion | default "v1" }}
+kind: ConfigMap
+metadata:
+  name: {{ template "mychart.fullname" . }}-config
+  labels:
+    app: {{ template "mychart.name" . }}
+    chart: {{ template "mychart.chart" . }}
+    release: {{ .Release.Name }}
+    heritage: {{ .Release.Service }}
+data:
+{{- if ne $envCount 0 }}{{/* Envrionment specific files config file count */}}
+{{- range $path, $content := .Files.Glob $envConfigPattern }}
+{{ $content | toString | indent 10 }}
+{{- end }}
+{{- end }}{{/* End of evrionment specific files config file count */}}
+{{- end }}
