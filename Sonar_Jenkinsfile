@@ -148,7 +148,7 @@ podTemplate(
 
               }
 
-              // OWSAP Dependency Check
+              // OWASP Dependency Check
               stage("OWASP Dependency-Check Vulnerabilities"){
                 dependencyCheck additionalArguments: ''' 
                     -o "./" 
