@@ -38,7 +38,7 @@ podTemplate(
             // Constants, please configure for to your service
             def SERVICE_NAME = "springboot-actuator"  // Name of your service example
             def BUILD_IMAGE = "openjdk18-openshift" // Docker runtime image
-            def DEV_PROJECT = "test" // Development namespace example
+            def DEV_PROJECT = "sanitytest" // Development namespace example
 
             // Resources to be assigned to your deployment
             def CPU_REQUESTS = "200m"
